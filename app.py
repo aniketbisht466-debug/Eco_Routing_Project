@@ -1,10 +1,32 @@
-import streamlit as st
+﻿import streamlit as st
 import networkx as nx
 import joblib
 import numpy as np
 import folium
 from streamlit_folium import st_folium
 import os
+import requests
+
+# ---------------------------------------------------
+#  OSRM REAL ROAD PATH HELPER
+# ---------------------------------------------------
+def get_real_road_path(start_coords, end_coords):
+    """Fetch actual road-network geometry between two [lat, lon] points
+    using the free OSRM demo server. Falls back to a straight line if
+    the API call fails or returns no routes."""
+    url = (
+        f"http://router.project-osrm.org/route/v1/driving/"
+        f"{start_coords[1]},{start_coords[0]};{end_coords[1]},{end_coords[0]}"
+        f"?overview=full&geometries=geojson"
+    )
+    try:
+        res = requests.get(url, timeout=5).json()
+        if 'routes' in res and len(res['routes']) > 0:
+            coords = res['routes'][0]['geometry']['coordinates']
+            return [[c[1], c[0]] for c in coords]  # OSRM returns [lon, lat]
+    except Exception:
+        pass
+    return [start_coords, end_coords]  # straight-line fallback
 
 # ReportLab Components for Corporate PDF Engine
 from reportlab.lib.pagesizes import letter
@@ -152,10 +174,20 @@ if start_point != end_point:
         color = "green" if name in [start_point, end_point] else "blue"
         folium.Marker(location=coords, popup=name, icon=folium.Icon(color=color, icon="info-sign")).add_to(m)
 
-    standard_coords = [locations[node] for node in standard_path]
-    eco_coords = [locations[node] for node in eco_path]
+    # 5. GEOSPATIAL MAPS INTEGRATION LAYER — stitch real road segments via OSRM
+    real_standard_coords = []
+    for i in range(len(standard_path) - 1):
+        real_standard_coords.extend(
+            get_real_road_path(locations[standard_path[i]], locations[standard_path[i + 1]])
+        )
 
-    folium.PolyLine(standard_coords, color="red", weight=4, opacity=0.6, tooltip="Standard Fast Route").add_to(m)
-    folium.PolyLine(eco_coords, color="green", weight=6, opacity=0.8, tooltip="AI Eco-Friendly Route").add_to(m)
+    real_eco_coords = []
+    for i in range(len(eco_path) - 1):
+        real_eco_coords.extend(
+            get_real_road_path(locations[eco_path[i]], locations[eco_path[i + 1]])
+        )
+
+    folium.PolyLine(real_standard_coords, color="red",   weight=4, opacity=0.6, tooltip="Standard Fast Route").add_to(m)
+    folium.PolyLine(real_eco_coords,      color="green", weight=6, opacity=0.8, tooltip="AI Eco-Friendly Route").add_to(m)
 
     st_folium(m, width=900, height=450)
